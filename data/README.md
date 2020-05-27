@@ -20,8 +20,8 @@ were obtained from https://github.com/Zhong-Lab-UCSD/course_project_2020
 
 *CTD_cancer_genes was obtained from the Comparative Toxicogenomics Database at http://ctdbase.org/basicQuery.go?bqCat=gene&bq=cancer after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
 *Cancer_census_genes was obtained from the COSMIC Cancer Gene Census at https://cancer.sanger.ac.uk/cosmic/census?tier=all after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
-*GSEA_KRAS.BREAST_UP.V1_UP.txt were obtained from MSigDB at https://www.gsea-msigdb.org/gsea/msigdb/geneset_page.jsp?geneSetName=KRAS.BREAST_UP.V1_UP&keywords=KRAS.BREAST_UP.V1_UP after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
-*GSEA_VANTVEER_BREAST_CANCER_POOR_PROGNOSIS.txt were obtained from MSigDB at https://www.gsea-msigdb.org/gsea/msigdb/cards/VANTVEER_BREAST_CANCER_POOR_PROGNOSIS after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
+*GSEA_KRAS_BREAST_UP_V1_UP was obtained from MSigDB at https://www.gsea-msigdb.org/gsea/msigdb/geneset_page.jsp?geneSetName=KRAS.BREAST_UP.V1_UP&keywords=KRAS.BREAST_UP.V1_UP after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
+*GSEA_VANTVEER_BREAST_CANCER_POOR_PROGNOSIS was obtained from MSigDB at https://www.gsea-msigdb.org/gsea/msigdb/cards/VANTVEER_BREAST_CANCER_POOR_PROGNOSIS after which the gene symbols were processed in Biomart to convert to Ensembl stable gene IDs. 
 
 
 
