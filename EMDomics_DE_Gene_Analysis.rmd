@@ -1,0 +1,225 @@
+---
+title: "EMDomics DE Gene Analysis"
+author: "Charles-Alexandre Roy"
+date: "5/31/2020"
+output: html_document
+---
+
+## Background
+The goal with this analysis was to identify the top differentially expressed genes between the recurrent and nonrecurrent cancer samples. 
+
+Initially, the plan was to use DESeq2 to perform the analysis; however, as I was following this guide to using DESeq2 (https://bioc.ism.ac.jp/packages/2.14/bioc/vignettes/DESeq2/inst/doc/beginner.pdf) the authors mentioned that DESeq2 expects count data as
+an input and stated that "this is important for DESeq2’s statistical model to hold, as only the actual counts allow assessing the measurement precision correctly. Hence, please do not supply other quantities, such as (rounded) normalized counts, or counts of covered base pairs – this will only lead to nonsensical results." However, in reviewing the publicly available data found at (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE131512) and (https://www.ncbi.nlm.nih.gov/Traces/study/?acc=PRJNA543872&o=acc_s%3Aa) it was found that only the TPM normalized data and the raw (unmapped) reads were available. 
+
+As mentioned here (https://support.bioconductor.org/p/98820/), the author of DESEq2 (Gordon Smyth) stated that in his opinion, there was no good way to do a DE analysis of RNA-seq data statrting from TPM values. Consequently, I decided to process the raw reads myself. Following the advice from (https://www.hadriengourle.com/tutorials/rna/), (https://bioconductor.statistik.tu-dortmund.de/packages/3.3/bioc/vignettes/tximport/inst/doc/tximport.html), and (https://combine-lab.github.io/salmon/getting_started/) and the documentation for Salmon at (https://salmon.readthedocs.io/en/latest/salmon.html#using-salmon) the goal was to process the data with Salmon, import Salmon's results into DESeq2 with tximport, and then process the read counts with DESeq2. However, several issues arose when trying to use Salmon including some memory errors, lack of clarity on how to generate a decoy-aware transcriptome, and lack of space for all the raw reads on my laptop. 
+
+Given the above, I returned to the problem of trying to perform a DE seq analysis starting with TPM values. This paper (https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-019-2599-6#Tab1) entitled "Comparative analysis of differential gene expression analysis tools for single-cell RNA sequencing data" mentioned that they had identified 11 tools that were commonly used for DE analysis. In Table 1. they show the tools along with what they take as input data. I noticed that EMDomics (among others) was designed to perform the analysis using TPM data as an input. The paper for EMDomics can be found here (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4743632/) and it seemed promising, especially because it was designed to detect differnetially expressed genes between classes when there is a high level of within class heterogenity. 
+
+Here are the strengths and limitations of EMDomics as described in the original paper: 
+The primary strength of EMDomics is that "it is a robust, non-parametric method, which does not make any assumptions about the distributions or differences between the two classes being compared, and thus has significantly more power than conventional approaches for identifying differential Omics features between heterogeneous classes."
+In terms of limitations, "EMDomics can currently only be used for two class problems and cannot be used with quantitative or multiclass labels. Second, because EMD is based on comparing the histograms of the two groups it requires at least a moderate sample size (∼30 samples per class) and will tend to perform poorly when there are few samples. Third, a significant EMD value does not allow any inference to be made regarding the direction or structure of an association; it provides evidence that a gene is expressed differently (in some way) between two classes, which can then lead to further follow-up analyses and experimental studies to more precisely characterize the association and its clinical and biological significance."
+
+After performing the following analysis with EMDomics, the top 100 DE genes identified significantly improved the classification results of most classifiers which agree with the results of the Zhong lab (who performed the DE analysis from the raw data). This provides some confirmation that EMDomics was used appropriately and was able to identify genuinely differentially expressed genes between the samples. 
+
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install()
+
+#BiocManager::install("tximport")
+library(tximport)
+
+#BiocManager::install("EMDomics")
+library(EMDomics)
+```
+
+### EMDomics-provided example
+100 genes, 100 samples
+```{r}
+data <- matrix(rnorm(10000), nrow=100, ncol=100)
+rownames(data) <- paste("gene", 1:100, sep="")
+colnames(data) <- paste("sample", 1:100, sep="")
+head(data)
+```
+
+"A": first 50 samples; "B": next 30 samples; "C": final 20 samples
+```{r}
+outcomes <- c(rep("A", 50), rep("B", 30), rep("C", 20))
+names(outcomes) <- colnames(data)
+outcomes
+```
+
+They mention that nperm=10 is just for the example and that realistically you'd want to use 100 permutations or more.
+```{r}
+results <- calculate_emd(data, outcomes, nperm=10, parallel=FALSE)  
+head(results$emd)
+```
+
+
+### Applying EMDomics to TPM data:
+```{r}
+Cancer_data <- read.table(file="data/GSE131512_cancerTPM.txt", header=T, sep="\t") #Import cancer TPM data
+outcomes <- c(rep("R", 28), rep("N", 68)) #Define targets/outcomes for cancer data
+names(outcomes) <- colnames(Cancer_data)  #Apply sample names to targets/outcomes
+outcomes
+```
+
+Remove rows containing no expression in either recurrent or non-recurrent samples from dataset
+```{r}
+Cancer_data_rm_no_expression_rec = Cancer_data[which(rowSums(Cancer_data[, 1:28]) > 0), ]
+Cancer_data_rm_no_expression_nonrec = Cancer_data_rm_no_expression_rec[which(rowSums(Cancer_data_rm_no_expression_rec[, 29:96]) > 0), ]
+```
+
+Originally I calculated the emd distances with 200 permutations on the entire dataset at once. However, after running for around 3 hours
+I got a memory error and everything was lost. To try to avoid storing too much in memory, I broke up the calculations in 1000 row increments.
+(I originally set this up in a loop but it kept giving strange results)
+```{r}
+Cancer_results_1 = calculate_emd(Cancer_data_rm_no_expression_nonrec[1:1000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_2 = calculate_emd(Cancer_data_rm_no_expression_nonrec[1001:2000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_3 = calculate_emd(Cancer_data_rm_no_expression_nonrec[2001:3000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_4 = calculate_emd(Cancer_data_rm_no_expression_nonrec[3001:4000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_5 = calculate_emd(Cancer_data_rm_no_expression_nonrec[4001:5000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_6 = calculate_emd(Cancer_data_rm_no_expression_nonrec[5001:6000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_7 = calculate_emd(Cancer_data_rm_no_expression_nonrec[6001:7000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_8 = calculate_emd(Cancer_data_rm_no_expression_nonrec[7001:8000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_9 = calculate_emd(Cancer_data_rm_no_expression_nonrec[8001:9000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_10 = calculate_emd(Cancer_data_rm_no_expression_nonrec[9001:10000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_11 = calculate_emd(Cancer_data_rm_no_expression_nonrec[10001:11000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_12 = calculate_emd(Cancer_data_rm_no_expression_nonrec[11001:12000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_13 = calculate_emd(Cancer_data_rm_no_expression_nonrec[12001:13000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_14 = calculate_emd(Cancer_data_rm_no_expression_nonrec[13001:14000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_15 = calculate_emd(Cancer_data_rm_no_expression_nonrec[14001:15000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_16 = calculate_emd(Cancer_data_rm_no_expression_nonrec[15001:16000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_17 = calculate_emd(Cancer_data_rm_no_expression_nonrec[16001:17000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_18 = calculate_emd(Cancer_data_rm_no_expression_nonrec[17001:18000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_19 = calculate_emd(Cancer_data_rm_no_expression_nonrec[18001:19000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_20 = calculate_emd(Cancer_data_rm_no_expression_nonrec[19001:20000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_21 = calculate_emd(Cancer_data_rm_no_expression_nonrec[20001:21000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_22 = calculate_emd(Cancer_data_rm_no_expression_nonrec[21001:22000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_23 = calculate_emd(Cancer_data_rm_no_expression_nonrec[22001:23000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_24 = calculate_emd(Cancer_data_rm_no_expression_nonrec[23001:24000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_25 = calculate_emd(Cancer_data_rm_no_expression_nonrec[24001:25000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_26 = calculate_emd(Cancer_data_rm_no_expression_nonrec[25001:26000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_27 = calculate_emd(Cancer_data_rm_no_expression_nonrec[26001:27000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_28 = calculate_emd(Cancer_data_rm_no_expression_nonrec[27001:28000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_29 = calculate_emd(Cancer_data_rm_no_expression_nonrec[28001:29000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_30 = calculate_emd(Cancer_data_rm_no_expression_nonrec[29001:30000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_31 = calculate_emd(Cancer_data_rm_no_expression_nonrec[30001:31000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_32 = calculate_emd(Cancer_data_rm_no_expression_nonrec[31001:32000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_33 = calculate_emd(Cancer_data_rm_no_expression_nonrec[32001:33000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_34 = calculate_emd(Cancer_data_rm_no_expression_nonrec[33001:34000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_35 = calculate_emd(Cancer_data_rm_no_expression_nonrec[34001:35000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_36 = calculate_emd(Cancer_data_rm_no_expression_nonrec[35001:36000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_37 = calculate_emd(Cancer_data_rm_no_expression_nonrec[36001:37000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_38 = calculate_emd(Cancer_data_rm_no_expression_nonrec[37001:38000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_39 = calculate_emd(Cancer_data_rm_no_expression_nonrec[38001:39000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_40 = calculate_emd(Cancer_data_rm_no_expression_nonrec[39001:40000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_41 = calculate_emd(Cancer_data_rm_no_expression_nonrec[40001:41000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_42 = calculate_emd(Cancer_data_rm_no_expression_nonrec[41001:42000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_43 = calculate_emd(Cancer_data_rm_no_expression_nonrec[42001:43000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_44 = calculate_emd(Cancer_data_rm_no_expression_nonrec[43001:44000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_45 = calculate_emd(Cancer_data_rm_no_expression_nonrec[44001:45000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_46 = calculate_emd(Cancer_data_rm_no_expression_nonrec[45001:46000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_47 = calculate_emd(Cancer_data_rm_no_expression_nonrec[46001:47000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_48 = calculate_emd(Cancer_data_rm_no_expression_nonrec[47001:48000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_49 = calculate_emd(Cancer_data_rm_no_expression_nonrec[48001:49000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_50 = calculate_emd(Cancer_data_rm_no_expression_nonrec[49001:50000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_51 = calculate_emd(Cancer_data_rm_no_expression_nonrec[50001:51000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_52 = calculate_emd(Cancer_data_rm_no_expression_nonrec[51001:52000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_53 = calculate_emd(Cancer_data_rm_no_expression_nonrec[52001:53000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_54 = calculate_emd(Cancer_data_rm_no_expression_nonrec[53001:54000,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+Cancer_results_55 = calculate_emd(Cancer_data_rm_no_expression_nonrec[54001:54858,], outcomes, nperm=200, parallel=FALSE, seq=TRUE)
+```
+
+After calculating all the emd distances for 1000 row intervals, they are all recombined into one matrix.
+```{r}
+Cancer_results_all = rbind(Cancer_results_1$emd, 
+                           Cancer_results_2$emd, 
+                           Cancer_results_3$emd, 
+                           Cancer_results_4$emd,
+                           Cancer_results_5$emd,
+                           Cancer_results_6$emd,
+                           Cancer_results_7$emd,
+                           Cancer_results_8$emd,
+                           Cancer_results_9$emd,
+                           Cancer_results_10$emd,
+                           Cancer_results_11$emd,
+                           Cancer_results_12$emd,
+                           Cancer_results_13$emd,
+                           Cancer_results_14$emd,
+                           Cancer_results_15$emd,
+                           Cancer_results_16$emd,
+                           Cancer_results_17$emd,
+                           Cancer_results_18$emd,
+                           Cancer_results_19$emd,
+                           Cancer_results_20$emd,
+                           Cancer_results_21$emd,
+                           Cancer_results_22$emd,
+                           Cancer_results_23$emd,
+                           Cancer_results_24$emd,
+                           Cancer_results_25$emd,
+                           Cancer_results_26$emd,
+                           Cancer_results_27$emd,
+                           Cancer_results_28$emd,
+                           Cancer_results_29$emd,
+                           Cancer_results_30$emd,
+                           Cancer_results_31$emd,
+                           Cancer_results_32$emd,
+                           Cancer_results_33$emd,
+                           Cancer_results_34$emd,
+                           Cancer_results_35$emd,
+                           Cancer_results_36$emd,
+                           Cancer_results_37$emd,
+                           Cancer_results_38$emd,
+                           Cancer_results_39$emd,
+                           Cancer_results_40$emd,
+                           Cancer_results_41$emd,
+                           Cancer_results_42$emd,
+                           Cancer_results_43$emd,
+                           Cancer_results_44$emd,
+                           Cancer_results_45$emd,
+                           Cancer_results_46$emd,
+                           Cancer_results_47$emd,
+                           Cancer_results_48$emd,
+                           Cancer_results_49$emd,
+                           Cancer_results_50$emd,
+                           Cancer_results_51$emd,
+                           Cancer_results_52$emd,
+                           Cancer_results_53$emd,
+                           Cancer_results_54$emd,
+                           Cancer_results_55$emd
+                           )
+```
+
+The combined emd distances and q-values are sorted by decreasing emd distance. 
+```{r}
+Cancer_results_all_sorted <- Cancer_results_all[(order(Cancer_results_all[,"emd"], decreasing=T)),]
+length(Cancer_results_all_sorted[, 1])
+```
+
+Return the top 150 gene IDs from the sorted matrix. 
+```{r}
+top_150_DE_genes = rownames(Cancer_results_all_sorted[1:150,])
+```
+
+Convert the top DE genes to the appropriate format for Python and print to Console.
+```{r}
+paste(shQuote(top_150_DE_genes), collapse=", ")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
